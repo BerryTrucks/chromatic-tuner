@@ -26,7 +26,10 @@ using namespace bb::cascades;
 
 ApplicationUI::ApplicationUI() : QObject()
 {
-    // prepare the localisation
+    // Start with uninitialised sound processor
+    soundProcessor = NULL;
+
+    // Prepare the localisation
     m_pTranslator = new QTranslator(this);
     m_pLocaleHandler = new LocaleHandler(this);
     QObject::connect(m_pLocaleHandler, SIGNAL(systemLanguageChanged()), this,
@@ -44,10 +47,49 @@ ApplicationUI::ApplicationUI() : QObject()
     // Set created root object as the application scene
     Application::instance()->setScene(root);
 
-    // Sound capture will start
-    soundProcessor = new SoundProcessor();
-    QObject::connect(soundProcessor, SIGNAL(readingUpdated(SoundProcessor::NoteInfo)), this,
+    QObject::connect(Application::instance(), SIGNAL(thumbnail()), this, SLOT(onThumbnail()));
+    QObject::connect(Application::instance(), SIGNAL(fullscreen()), this, SLOT(onFullscreen()));
+    QObject::connect(Application::instance(), SIGNAL(asleep()), this, SLOT(onAsleep()));
+    QObject::connect(Application::instance(), SIGNAL(awake()), this, SLOT(onAwake()));
+}
+
+void ApplicationUI::stopSoundCapture() {
+    if (soundProcessor != NULL) {
+        qDebug("Sound capture will stop");
+        QObject::disconnect(soundProcessor, SIGNAL(readingUpdated(SoundProcessor::NoteInfo)), this,
+                    SLOT(onReadingUpdated(SoundProcessor::NoteInfo)));
+        delete soundProcessor;
+        soundProcessor = NULL;
+    }
+}
+
+void ApplicationUI::startSoundCapture() {
+    if (soundProcessor == NULL) {
+        qDebug("Sound capture will start");
+        soundProcessor = new SoundProcessor();
+        QObject::connect(soundProcessor, SIGNAL(readingUpdated(SoundProcessor::NoteInfo)), this,
             SLOT(onReadingUpdated(SoundProcessor::NoteInfo)));
+    }
+}
+
+void ApplicationUI::onThumbnail() {
+    qDebug("Entering thumbnail mode");
+    stopSoundCapture();
+}
+
+void ApplicationUI::onFullscreen() {
+    qDebug("Entering full screen mode");
+    startSoundCapture();
+}
+
+void ApplicationUI::onAsleep() {
+    qDebug("Application is asleep");
+    stopSoundCapture();
+}
+
+void ApplicationUI::onAwake() {
+    qDebug("Application is awake");
+    startSoundCapture();
 }
 
 void ApplicationUI::onReadingUpdated(SoundProcessor::NoteInfo note) {

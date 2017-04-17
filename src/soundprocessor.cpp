@@ -266,6 +266,9 @@ SoundProcessor::NoteInfo SoundProcessor::getNote() {
 }
 
 int SoundProcessor::terminate() {
+    disconnect(fdNotifier, SIGNAL(activated(int)), this, SLOT(readPCM()));
+    delete fdNotifier;
+
 	int rtn;
 	if ((rtn = snd_pcm_close(pcmHandle)) < 0) {
 		qDebug("snd_pcm_close failed: %s\n", snd_strerror(rtn));

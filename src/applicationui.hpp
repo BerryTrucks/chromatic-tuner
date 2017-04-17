@@ -37,12 +37,18 @@ public:
     ApplicationUI();
     virtual ~ApplicationUI() {}
 private slots:
+    void onThumbnail();
+    void onFullscreen();
+    void onAsleep();
+    void onAwake();
     void onSystemLanguageChanged();
     void onReadingUpdated(SoundProcessor::NoteInfo);
 private:
     QTranslator* m_pTranslator;
     bb::cascades::LocaleHandler* m_pLocaleHandler;
     SoundProcessor* soundProcessor;
+    void startSoundCapture();
+    void stopSoundCapture();
 };
 
 #endif /* ApplicationUI_HPP_ */
