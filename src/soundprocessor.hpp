@@ -38,7 +38,7 @@
 #define FAILURE -1
 #define F_PI 3.14159265f
 
-#undef DETECT_OVERTONES
+#define DETECT_OVERTONES
 
 class SoundProcessor : public QObject {
     Q_OBJECT
@@ -71,6 +71,7 @@ private:
     inline float convertBinToFreq(int);
     inline int convertFreqToBin(float);
     void getParabolicInterpolationVertex(float, float, float, float, float, float, float*, float*);
+    float getOvertone(kiss_fft_cpx*, float, int);
 
 private:
     int card;
@@ -91,7 +92,6 @@ private:
     snd_mixer_t* mixerHandle;
     snd_mixer_group_t group;
 
-    NoteInfo lastStableNote;
     int tuningFreq;
     int sampleRate;
     int sampleChannels;

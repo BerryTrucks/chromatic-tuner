@@ -85,7 +85,7 @@ int SoundProcessor::init(const char * name) {
 	}
 
 	// FFT related configuration
-	fftSize = 32768;
+	fftSize = 131072;
 	captureWindow = (size_t)ceil((float)fftSize/(float)fragSize)*fragSize;
 	fragBuff = new char[fragSize];
 	memset(fragBuff, 0, fragSize);
@@ -97,10 +97,6 @@ int SoundProcessor::init(const char * name) {
     memset(history, 0, sizeof(float)*historySize);
 
     readCount = 0;
-
-    lastStableNote.note[0] = 0;
-    lastStableNote.frequency = 0.0f;
-    lastStableNote.centsDiff = 0.0f;
 
     qDebug("Fragment size: %d", fragSize);
     qDebug("Capture window size: %d", captureWindow);
@@ -116,7 +112,7 @@ int SoundProcessor::init(const char * name) {
 
 void SoundProcessor::readPCM() {
     ssize_t bytesRead = snd_pcm_read(pcmHandle, fragBuff, fragSize);
-    //qDebug("Bytes read: %d", bytes_read);
+    //qDebug("Bytes read: %d", bytesRead);
 
     // Add read bytes to the end of the buffer, remove old data from the beginning of
     // the buffer.
@@ -130,23 +126,10 @@ void SoundProcessor::readPCM() {
         delete tmp;
     }
 
-    // Analyse the buffer every 10 readings
-    if (readCount == 10) {
+    // Don't analyse every single reading
+    if (readCount == 2) {
         NoteInfo note = getNote();
-
-        if (silentReadCount > 5) {
-            // After a period of low-amplitude readings we'll emit an empty reading
-            emit readingUpdated(note);
-        } else if (note.note[0] == 0 && lastStableNote.note[0] != 0) {
-            // Current reading is empty, but there is a recent stable reading
-            emit readingUpdated(lastStableNote);
-        } else if (history[0] > 0) {
-            // There is a reading, emit stable reading based on history
-            emit readingUpdated(lastStableNote);
-        } else {
-            // Default
-            emit readingUpdated(note);
-        }
+        emit readingUpdated(note);
 
         readCount = 0;
     }
@@ -157,19 +140,19 @@ SoundProcessor::NoteInfo SoundProcessor::getNote() {
     note.note[0] = 0;
     note.centsDiff = 0.0f;
 
-    kiss_fft_scalar fftIn[fftSize];
-    kiss_fft_cpx fftOut[fftSize*2];
+    kiss_fft_scalar *fftIn = new kiss_fft_scalar[fftSize];
+    kiss_fft_cpx *fftOut = new kiss_fft_cpx[fftSize*2];
     kiss_fftr_cfg fft = kiss_fftr_alloc(fftSize, 0, 0, 0);
     memcpy(fftIn, buff, fftSize);
-    /*struct timespec t0, t1;
-    clock_gettime(CLOCK_REALTIME, &t0);*/
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_REALTIME, &t0);
 
     size_t windowSize = fftSize;
     applyWindow(fftIn, windowSize);
-
     kiss_fftr(fft, fftIn, fftOut);
-    /*clock_gettime(CLOCK_REALTIME, &t1);
-    /qDebug("FFT took %li sec + %f msec\n", long(t1.tv_sec) - long(t0.tv_sec), float(long(t1.tv_nsec) - long(t0.tv_nsec))/1000000);*/
+
+    clock_gettime(CLOCK_REALTIME, &t1);
+    qDebug("FFT took %li sec + %f msec\n", long(t1.tv_sec) - long(t0.tv_sec), float(long(t1.tv_nsec) - long(t0.tv_nsec))/1000000);
     float maxAmplitude = 0;
     int bin = 0;
     for (size_t j=0; j < fftSize; j++) {
@@ -187,7 +170,9 @@ SoundProcessor::NoteInfo SoundProcessor::getNote() {
         int overtone = 1;
         silentReadCount = 0;
 
-        if (bin > 0) {
+        // For small FFT sizes interpolation is required, the dominant bin's and adjacent bins'
+        // amplitudes fluctuates as the actual frequency changes
+        if (bin > 0 && fftSize <= 32768) {
             float freqL = convertBinToFreq(bin-1);
             float freqR = convertBinToFreq(bin+1);
             float amplitudeL = getAmplitude(fftOut[bin-1]);
@@ -200,34 +185,8 @@ SoundProcessor::NoteInfo SoundProcessor::getNote() {
             getParabolicInterpolationVertex(freqL, amplitudeL, freq, maxAmplitude, freqR, amplitudeR, &adjustedFreq, &adjustedAmplitude);
         }
 
-#ifdef DETECT_OVERTONES
-        if (bin > 1) {
-            // check if the bin caught an overtone
-            float fundamental_amplitude = 0.0f;
-            int fundamental_bin = 0;
-            for (float m = 2.0; m <= 4.0; m += 1.0) {
-                float a = 0;
-                int bin_guess = convertFreqToBin(freq/m);
-                int b = bin_guess;
-                //for (int b = bin_guess -1; (b <= bin_guess + 1) && (b > 0); b++) {
-                    a = getAmplitude(fftOut[b]);
-                    if (a > fundamental_amplitude) {
-                        fundamental_bin = b;
-                        fundamental_amplitude = a;
-                        overtone = m;
-                    }
-                //}
-                //qDebug("f/%f amplitude=%f\n", m, a);
-            }
-            if (fundamental_amplitude >= adjustedFreq*0.5) {
-                qDebug("Overtone detected: f*%d, a=%f\n", overtone, fundamental_amplitude);
-                //bin = fundamental_bin;
-                //freq = convertBinToFreq(bin);
-            } else {
-                overtone = 1;
-            }
-        }
-#endif
+        // Detect if we caught an overtone instead of the fundamental
+        //overtone = getOvertone(fftOut, adjustedFreq, bin);
 
         // Push older values in history of captured frequencies back in the history array
         for (size_t h = 1; h < historySize; h++)
@@ -245,14 +204,14 @@ SoundProcessor::NoteInfo SoundProcessor::getNote() {
             }
         }
 
-        // Sanity check to filter out unstable readings
+        // Sanity check to filter out unstable readings. If reading is not stable, return an empty note
         if (consistentTone && saneFreqRange) {
-            float freqSum = 0;
-            for (size_t h = 0; h < historySize; h++)
-                freqSum += history[h];
-            float historicalAvgFreq = freqSum/historySize;
-            convertFreqToNote(historicalAvgFreq, maxAmplitude, overtone, &lastStableNote);
+            //convertFreqToNote(freq, maxAmplitude, overtone, &lastStableNote);
             convertFreqToNote(adjustedFreq, maxAmplitude, overtone, &note);
+            qDebug("f=%f a=%f %s", freq, maxAmplitude, note.note);
+        } else {
+            note.note[0] = 0;
+            note.centsDiff = 0.0f;
         }
     } else {
         // Maximum signal amplitude is too low
@@ -261,6 +220,8 @@ SoundProcessor::NoteInfo SoundProcessor::getNote() {
 
     // cleanup
     kiss_fft_free(fft);
+    delete fftIn;
+    delete fftOut;
 
     return note;
 }
@@ -330,4 +291,32 @@ void SoundProcessor::getParabolicInterpolationVertex(float x1, float y1, float x
 
 	*xv = b*(-1) / (2*a);
 	*yv = c - b*b / (4*a);
+}
+
+float SoundProcessor::getOvertone(kiss_fft_cpx *fft, float freq, int bin) {
+    float overtone = 1;
+    if (bin > 1) {
+        // check if the bin caught an overtone
+        float fundamentalAmplitude = 0.0f;
+        for (float m = 1.5; m <= 2.0; m += 0.5) {
+            float a = 0;
+            int binGuess = convertFreqToBin(freq/m);
+            //int b = binGuess;
+            for (int b = binGuess -1; (b <= binGuess + 1) && (b > 0); b++) {
+                a = getAmplitude(fft[b]);
+                if (a > fundamentalAmplitude) {
+                    fundamentalAmplitude = a;
+                    overtone = m;
+                }
+            }
+            //qDebug("f/%f amplitude=%f\n", m, a);
+        }
+        if (fundamentalAmplitude >= freq*0.5) {
+            qDebug("Overtone detected: f*%f, a=%f\n", overtone, fundamentalAmplitude);
+        } else {
+            overtone = 1;
+        }
+    }
+
+    return overtone;
 }
