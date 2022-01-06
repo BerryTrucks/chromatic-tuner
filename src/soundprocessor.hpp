@@ -65,7 +65,7 @@ public Q_SLOTS:
 
 private:
     NoteInfo getNote();
-    void applyWindow(short*, int);
+    void applyWindow(float*, int);
     void convertFreqToNote(float, float, int, struct NoteInfo*);
     inline float getAmplitude(kiss_fft_cpx);
     inline float convertBinToFreq(int);

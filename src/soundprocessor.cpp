@@ -242,7 +242,7 @@ int SoundProcessor::terminate() {
 	return SUCCESS;
 }
 
-void SoundProcessor::applyWindow(short* data, int n) {
+void SoundProcessor::applyWindow(float* data, int n) {
 	for (int i = 0; i < n; i++) {
 		float coef = 0.5*(1 - cos(2*F_PI*i/(n-1)));
 		data[i] = short(coef*float(data[i]));
